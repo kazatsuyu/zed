@@ -21,10 +21,10 @@ use windows::{
         Graphics::Gdi::HBRUSH,
         UI::WindowsAndMessaging::{
             CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, PostQuitMessage, RegisterClassW,
-            SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW, CW_USEDEFAULT,
-            GWLP_WNDPROC, HCURSOR, HICON, HMENU, SW_MAXIMIZE, SW_SHOW, WINDOW_EX_STYLE,
-            WINDOW_LONG_PTR_INDEX, WM_CLOSE, WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY,
-            WM_PAINT, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+            SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW, CW_USEDEFAULT, HCURSOR,
+            HICON, HMENU, SW_MAXIMIZE, SW_SHOW, WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WM_CLOSE,
+            WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSW,
+            WS_OVERLAPPEDWINDOW, WS_VISIBLE,
         },
     },
 };
@@ -467,7 +467,7 @@ fn register_wnd_class() -> PCWSTR {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let wc = WNDCLASSW {
-            lpfnWndProc: Some(wnd_proc_start),
+            lpfnWndProc: Some(wnd_proc),
             cbClsExtra: 0,
             cbWndExtra: std::mem::size_of::<*const c_void>() as i32,
             hInstance: HINSTANCE::default(),
@@ -484,7 +484,7 @@ fn register_wnd_class() -> PCWSTR {
     CLASS_NAME
 }
 
-unsafe extern "system" fn wnd_proc_start(
+unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
@@ -503,19 +503,10 @@ unsafe extern "system" fn wnd_proc_start(
         ));
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0), Box::into_raw(weak) as isize) };
-        unsafe { set_window_long(hwnd, GWLP_WNDPROC, wnd_proc as *const c_void as isize) };
         ctx.inner = Some(inner);
         return LRESULT(1);
     }
-    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-}
 
-unsafe extern "system" fn wnd_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
     let ptr =
         unsafe { get_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0)) } as *mut Weak<WindowsWindowInner>;
     if ptr.is_null() {
