@@ -105,9 +105,18 @@ cosmic-text = "0.10.0"
 open = "5.0.1"
 ashpd = "0.7.0"
 # todo!(linux) - Technically do not use `randr`, but it doesn't compile otherwise
-xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr", "xkb"] }
-wayland-client= { version = "0.31.2" }
-wayland-protocols = { version = "0.31.2", features = ["client", "staging", "unstable"] }
+xcb = { version = "1.3", features = [
+    "as-raw-xcb-connection",
+    "present",
+    "randr",
+    "xkb",
+] }
+wayland-client = { version = "0.31.2" }
+wayland-protocols = { version = "0.31.2", features = [
+    "client",
+    "staging",
+    "unstable",
+] }
 wayland-backend = { version = "0.3.3", features = ["client_system"] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 as-raw-xcb-connection = "1"
@@ -117,7 +126,7 @@ version = "0.53.0"
 features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
 ]
 
 [[example]]

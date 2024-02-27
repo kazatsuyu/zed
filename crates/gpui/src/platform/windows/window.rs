@@ -17,14 +17,14 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use windows::{
     core::{w, HSTRING, PCWSTR},
     Win32::{
-        Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
-        Graphics::Gdi::HBRUSH,
+        Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+        System::LibraryLoader::GetModuleHandleW,
         UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, PostQuitMessage, RegisterClassW,
-            SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW, CW_USEDEFAULT, HCURSOR,
-            HICON, HMENU, SW_MAXIMIZE, SW_SHOW, WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WM_CLOSE,
-            WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSW,
-            WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+            CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, LoadCursorW, PostQuitMessage,
+            RegisterClassW, SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW,
+            CW_USEDEFAULT, IDC_ARROW, SW_MAXIMIZE, WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX,
+            WM_CLOSE, WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSW,
+            WS_OVERLAPPEDWINDOW,
         },
     },
 };
@@ -211,17 +211,29 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Self {
+        static ONCE: Once = Once::new();
+        const CLASS_NAME: PCWSTR = w!("Zed::Window");
+
+        let hinstance = unsafe { GetModuleHandleW(None) }.unwrap();
+        ONCE.call_once(|| {
+            let wc = WNDCLASSW {
+                lpfnWndProc: Some(wnd_proc),
+                hInstance: hinstance.into(),
+                hCursor: unsafe { LoadCursorW(None, IDC_ARROW).ok().unwrap() },
+                lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
+                ..Default::default()
+            };
+            unsafe { RegisterClassW(&wc) };
+        });
+
+        let windowname = options
+            .titlebar
+            .map(|titlebar| titlebar.title)
+            .flatten()
+            .map(|title| HSTRING::from(title.as_ref()))
+            .unwrap_or(HSTRING::new());
         let dwexstyle = WINDOW_EX_STYLE::default();
-        let classname = register_wnd_class();
-        let windowname = HSTRING::from(
-            options
-                .titlebar
-                .as_ref()
-                .and_then(|titlebar| titlebar.title.as_ref())
-                .map(|title| title.as_ref())
-                .unwrap_or(""),
-        );
-        let dwstyle = WS_OVERLAPPEDWINDOW & !WS_VISIBLE;
+        let dwstyle = WS_OVERLAPPEDWINDOW;
         let mut x = CW_USEDEFAULT;
         let mut y = CW_USEDEFAULT;
         let mut nwidth = CW_USEDEFAULT;
@@ -236,33 +248,29 @@ impl WindowsWindow {
                 nheight = bounds.size.height.0 as i32;
             }
         };
-        let hwndparent = HWND::default();
-        let hmenu = HMENU::default();
-        let hinstance = HINSTANCE::default();
-        let mut context = WindowCreateContext {
+        let mut init_context = WindowCreateContext {
             inner: None,
             platform_inner: platform_inner.clone(),
             handle,
         };
-        let lpparam = Some(&context as *const _ as *const _);
         unsafe {
             CreateWindowExW(
                 dwexstyle,
-                classname,
+                CLASS_NAME,
                 &windowname,
                 dwstyle,
                 x,
                 y,
                 nwidth,
                 nheight,
-                hwndparent,
-                hmenu,
+                None,
+                None,
                 hinstance,
-                lpparam,
+                Some(&mut init_context as *mut _ as *mut _),
             )
         };
         let wnd = Self {
-            inner: context.inner.unwrap(),
+            inner: init_context.inner.unwrap(),
         };
         platform_inner.window_handles.borrow_mut().insert(handle);
         match options.bounds {
@@ -270,7 +278,6 @@ impl WindowsWindow {
             WindowBounds::Maximized => wnd.maximize(),
             WindowBounds::Fixed(_) => {}
         }
-        unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOW) };
         wnd
     }
 
@@ -461,29 +468,6 @@ impl PlatformWindow for WindowsWindow {
     fn set_graphics_profiler_enabled(&self, enabled: bool) {}
 }
 
-fn register_wnd_class() -> PCWSTR {
-    const CLASS_NAME: PCWSTR = w!("Zed::Window");
-
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let wc = WNDCLASSW {
-            lpfnWndProc: Some(wnd_proc),
-            cbClsExtra: 0,
-            cbWndExtra: std::mem::size_of::<*const c_void>() as i32,
-            hInstance: HINSTANCE::default(),
-            hIcon: HICON::default(),
-            hCursor: HCURSOR::default(),
-            hbrBackground: HBRUSH::default(),
-            lpszMenuName: PCWSTR::null(),
-            lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
-            ..Default::default()
-        };
-        unsafe { RegisterClassW(&wc) };
-    });
-
-    CLASS_NAME
-}
-
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -493,17 +477,17 @@ unsafe extern "system" fn wnd_proc(
     if msg == WM_NCCREATE {
         let cs = lparam.0 as *const CREATESTRUCTW;
         let cs = unsafe { &*cs };
-        let ctx = cs.lpCreateParams as *mut WindowCreateContext;
-        let ctx = unsafe { &mut *ctx };
+        let init_context = cs.lpCreateParams as *mut WindowCreateContext;
+        let init_context = unsafe { &mut *init_context };
         let inner = Rc::new(WindowsWindowInner::new(
             hwnd,
             cs,
-            ctx.platform_inner.clone(),
-            ctx.handle,
+            init_context.platform_inner.clone(),
+            init_context.handle,
         ));
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0), Box::into_raw(weak) as isize) };
-        ctx.inner = Some(inner);
+        init_context.inner = Some(inner);
         return LRESULT(1);
     }
 
