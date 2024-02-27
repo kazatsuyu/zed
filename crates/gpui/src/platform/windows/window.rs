@@ -22,9 +22,9 @@ use windows::{
         UI::WindowsAndMessaging::{
             CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, LoadCursorW, PostQuitMessage,
             RegisterClassW, SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW,
-            CW_USEDEFAULT, IDC_ARROW, SW_MAXIMIZE, WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX,
-            WM_CLOSE, WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSW,
-            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT, GWL_USERDATA, IDC_ARROW, SW_MAXIMIZE, WINDOW_EX_STYLE,
+            WINDOW_LONG_PTR_INDEX, WM_CLOSE, WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY,
+            WM_PAINT, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
         },
     },
 };
@@ -91,8 +91,8 @@ impl WindowsWindowInner {
             .unwrap(),
         );
         let extent = gpu::Extent {
-            width: 1,
-            height: 1,
+            width: cs.cx as u32,
+            height: cs.cy as u32,
             depth: 1,
         };
         let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
@@ -485,28 +485,23 @@ unsafe extern "system" fn wnd_proc(
             init_context.platform_inner.clone(),
             init_context.handle,
         ));
-        let weak = Box::new(Rc::downgrade(&inner));
-        unsafe { set_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0), Box::into_raw(weak) as isize) };
+        unsafe { set_window_long(hwnd, GWL_USERDATA, Rc::into_raw(inner.clone()) as isize) };
         init_context.inner = Some(inner);
-        return LRESULT(1);
-    }
-
-    let ptr =
-        unsafe { get_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0)) } as *mut Weak<WindowsWindowInner>;
-    if ptr.is_null() {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
-    let inner = unsafe { &*ptr };
-    let r = if let Some(inner) = inner.upgrade() {
+
+    let userdata = unsafe { get_window_long(hwnd, GWL_USERDATA) } as *const WindowsWindowInner;
+    let result = if let Some(inner) = unsafe { userdata.as_ref() } {
         inner.handle_msg(msg, wparam, lparam)
     } else {
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     };
     if msg == WM_NCDESTROY {
-        unsafe { set_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0), 0) };
-        unsafe { std::mem::drop(Box::from_raw(ptr)) };
+        unsafe { set_window_long(hwnd, GWL_USERDATA, 0) };
+        unsafe { std::mem::drop(Rc::from_raw(userdata)) };
+        return LRESULT(0);
     }
-    r
+    result
 }
 
 unsafe fn get_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX) -> isize {
